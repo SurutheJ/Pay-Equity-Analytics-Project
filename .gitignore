@@ -1,0 +1,40 @@
+# R specific
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+*~
+*.tmp
+*.temp
+
+# Output files (uncomment if you don't want to track these)
+# *.html
+# *.pdf
+
+# R package files
+*.tar.gz
+*.Rcheck/
+
+# Compiled files
+*.o
+*.so
+*.dll

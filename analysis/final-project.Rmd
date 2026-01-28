@@ -1,0 +1,448 @@
+---
+title: "Pay Equity Analytics Project"
+author: "Suruthe Jayachandran"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 5
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+set.seed(42)  # For reproducibility
+library(dplyr)
+library(ggplot2)
+library(relaimpo)
+library(car)
+library(effectsize)
+library(rcompanion)
+library(ARTool)
+library(rstatix)
+library(rsq)
+library(nnet)
+library(psych)
+library(apaTables)
+library(knitr)
+library(ggcorrplot)
+```
+
+## Overview
+
+This analysis investigates gender-based pay disparities using Glassdoor compensation data. The study employs multiple statistical techniques including t-tests, ANOVA, and regression modeling to answer five research questions about the gender pay gap.
+
+**Data Source**: [Kaggle - Glassdoor Analyze Gender Pay Gap](https://www.kaggle.com/datasets/nilimajauhari/glassdoor-analyze-gender-pay-gap)
+
+## Data Processing
+```{r}
+data <- read.csv("../data/glassdoor-gender-pay-gap.csv")
+data$Gender <- factor(data$Gender)
+data$Dept <- factor(data$Dept)
+head(data)
+```
+### Data Cleaning
+
+```{r}
+# Create an column that is the sum of base pay + bonus = full salary
+data$Salary <- data$BasePay +  data$Bonus
+
+
+# Remove outliers
+data <- data %>%
+  filter(between(Salary,
+                 quantile(Salary, 0.25) - 1.4 * IQR(Salary), # 1.4*IQR to be more conservative
+                 quantile(Salary, 0.75) + 1.4 * IQR(Salary)))
+```
+
+### Descriptive Data
+
+1. Distribution of Job titles
+```{r}
+ggplot(data, aes(x = JobTitle, fill = Gender)) +
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(
+    title = "Distribution of Job Titles by Gender",
+    x = "Job Title",
+    y = "Count",
+    fill = "Gender"
+  )
+```
+
+2. Distribution of Salaries for male and female
+```{r}
+ggplot(data, aes(x = Gender, y = Salary)) +
+  geom_boxplot() + 
+  geom_point(position = position_jitter(width = .1), alpha = .15, size = 2) + 
+  stat_summary(fun = mean, geom = "point", color = "darkblue") + # add the mean as a point
+  stat_summary(fun = mean, geom = "line", aes(group = "BeforeOrAfter"), color = "darkblue") + # add the line between groups
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.3, color = "darkblue") +  # add error bars 
+  labs(x = "Gender",
+       y = "Salary") # rename x- and y-axis
+```
+
+3. Colinearity Checking
+```{r}
+data_cor <- data %>% select(Age, PerfEval, Seniority, Salary)
+
+
+mixed_corr <- mixedCor(data_cor)$rho
+# cor_matrix <- cor(data_cor,
+                  #use = "pairwise.complete.obs")
+
+ggcorrplot(mixed_corr, hc.order = TRUE, type = "lower", 
+           lab = TRUE, lab_size = 3, method="circle", 
+           colors = c("tomato2", "white", "springgreen3"), 
+           title="Correlation Matrix with ggcorrplot", 
+           ggtheme=ggplot2::theme_minimal())
+```
+
+
+## RQ1: Is there evidence of the gender pay gap across job titles, departments, and education levels?
+
+```{r}
+## Assumption checking for t-test
+female <- data %>% filter(Gender=="Female")
+male <- data %>% filter(Gender=="Male")
+
+### Normality (shapiro-wilk test)
+shapiro.test(female$Salary)
+shapiro.test(male$Salary)
+# -> the normality is met
+
+### Homogeneity of Variance
+leveneTest(Salary ~ Gender, data = data)
+# -> the homogeneity of variance is met
+```
+
+
+```{r}
+## t-test between male vs. female overall
+
+female <- data %>% filter(Gender=="Female")
+male <- data %>% filter(Gender=="Male")
+
+## -> We can run Student's t-test
+res <- t.test(male$Salary, female$Salary, var.equal = TRUE)
+res
+effectsize(res)
+```
+
+### ANOVA between male vs. female across different job titles
+```{r}
+## ANOVA between male vs. female across different job titles
+model <- aov(Salary ~ Gender * JobTitle, data)
+
+
+### Check the assumptions
+### -> Normality of Residuals
+res <- residuals(model)
+shapiro.test(res)
+
+### -> Check the homogeneity of variance
+leveneTest(Salary ~ Gender * JobTitle, data)
+
+### -> homogeneity of variance is met
+### -> Normality of residuals are not met
+```
+
+```{r}
+## Because the assumption of normality of residual violated,
+## We will use Scheirer–Ray–Hare Test (SRH Test) -> non-parametric substitute for a two-way ANOVA
+scheirerRayHare(Salary ~ Gender * JobTitle, data=data)
+
+## Post-hoc test
+res <- dunn_test(Salary ~ JobTitle, data=data)
+
+dunn_results_clean <- res %>%
+  dplyr::select(group1, group2, statistic, p.adj) %>%
+  dplyr::rename(
+    "Job Title 1" = group1,
+    "Job Title 2" = group2,
+    "Z statistic" = statistic,
+    "Adjusted p-value" = p.adj
+  )
+
+write.csv(
+  dunn_results_clean,
+  "Dunn_Test_Results_Appendix.csv",
+  row.names = FALSE
+)
+```
+
+
+### ANOVA between male vs. female across different department
+```{r}
+## ANOVA between male vs. female across different Deptartment
+model <- aov(Salary ~ Gender * Dept, data)
+
+### Check the assumptions
+### -> Normality of Residuals
+res <- residuals(model)
+shapiro.test(res)
+
+### -> Check the homogeneity of variance
+leveneTest(Salary ~ Gender * Dept, data)
+```
+
+```{r}
+## Because the assumption of normality of residual violated,
+## We will use Scheirer–Ray–Hare Test (SRH Test) -> non-parametric substitute for a two-way ANOVA
+scheirerRayHare(Salary ~ Gender * Dept, data=data)
+
+## Post-hoc test
+res <- dunn_test(Salary ~ Dept, data=data)
+dunn_results_clean <- res %>%
+  dplyr::select(group1, group2, statistic, p.adj) %>%
+  dplyr::rename(
+    "Job Title 1" = group1,
+    "Job Title 2" = group2,
+    "Z statistic" = statistic,
+    "Adjusted p-value" = p.adj
+  )
+
+write.csv(
+  dunn_results_clean,
+  "Dunn_Test_Results_Appendix.csv",
+  row.names = FALSE
+)
+```
+
+### ANOVA between male vs. female across different Education
+```{r}
+## ANOVA between male vs. female across different education levels
+model <- aov(Salary ~ Gender * Education, data)
+
+### Check the assumptions
+### -> Normality of Residuals
+res <- residuals(model)
+shapiro.test(res)
+
+### -> Check the homogeneity of variance
+leveneTest(Salary ~ Gender * Education, data)
+```
+
+```{r}
+summary(model)
+
+## Post-hoc test
+TukeyHSD(model, "Education")
+```
+
+
+## RQ2: Which organizational and employee factors best explain variations in the gender pay gap?
+- We are going to use regression to tell 
+```{r}
+## Using multiple regression to explain the variation in the gender pay gap
+## Base model
+model_base <- lm(Salary ~ Gender, data = data)
+summary(model_base)
+```
+
+```{r}
+## Model with organizational factors
+model_org <- lm(Salary ~ Gender + Dept + JobTitle, data = data)
+summary(model_org)
+
+## Relative importance analysis 
+# calc.relimp(model_full, type = "lmg")
+rsq.partial(model_org)
+```
+
+
+```{r}
+## Model with employee factors
+model_emp <- lm(Salary ~ Gender + Seniority + PerfEval + Age, data = data)
+summary(model_emp)
+
+## Relative importance analysis 
+# calc.relimp(model_full, type = "lmg")
+rsq.partial(model_emp)
+```
+
+## RQ3: Does higher education or performance evaluation mitigate the gender pay gap?
+```{r}
+
+model_rq3 <- lm(Salary ~ Gender * Education + 
+                  Gender * PerfEval + 
+                  Seniority + Age + JobTitle + Dept, data = data)
+summary(model_rq3)
+```
+
+**The effect of education on salary does NOT differ between men and women.**
+**The effect of performance evaluation on salary does NOT differ between men and women.**
+**The interaction between gender and PhD was marginally significant (p = 0.087, still bigger than 0.05), suggesting a *possible trend* where the highest education level might slightly reduce the gender gap.**
+
+## RQ4: Are women less likely to be among the top earners?
+```{r}
+
+## Define top 10% as the top earner
+data <- data %>%
+  mutate(
+    TopEarner = Salary >= quantile(Salary, 0.90, na.rm = TRUE),
+    TopEarner = factor(TopEarner, 
+                        levels = c(FALSE, TRUE),
+                        labels = c("No", "Yes"))
+  )
+
+## Run the logistic regression
+model_rq4 <- glm(TopEarner ~ Gender + Seniority + Age + JobTitle + Dept + Education + PerfEval,
+                 data = data, family = "binomial")
+
+summary(model_rq4)
+
+exp(coef(model_rq4))
+```
+```{r}
+ggplot(data, aes(x = Salary, fill = Gender)) +
+  geom_histogram(binwidth = 3000, color = "white", alpha = 0.7) +
+  labs(title = "Histogram of Salary",
+       x = "Salary",
+       y = "Count") +
+  theme_minimal()
+```
+
+## RQ5 - additional-> gender predict job titles
+```{r}
+
+data$Gender   <- factor(data$Gender)
+data$JobTitle <- factor(data$JobTitle)
+
+model <- multinom(JobTitle ~ Gender + Seniority + Age, data = data)
+summary(model)
+
+Anova(model)
+
+
+table(data$Gender, data$JobTitle)
+prop.table(table(data$Gender, data$JobTitle), margin = 1)
+
+```
+
+## Additional Plots
+```{r}
+# Code for RQ 2
+library(ggplot2)
+library(broom)
+
+# Extract results from your Organizational Model
+tidy_org <- tidy(model_org, conf.int = TRUE) %>%
+  filter(term != "(Intercept)")
+
+# Plot
+ggplot(tidy_org, aes(x =estimate, y = reorder(term, estimate))) +
+  geom_point(size = 3, color = ifelse(tidy_org$p.value < 0.05, "darkblue","red")) + # Blue if significant, Red if not
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_vline(xintercept = 0,linetype ="dashed", color = "gray50") +
+  labs(title = "What Actually Drives Salary?",
+       subtitle = "Gender (Red) crosses 0 = No Impact. Job Titles (Blue) drive the gap.",
+       x = "Impact on Salary ($)",
+       y = "Factor")+
+  theme_minimal()
+# Code for RQ 3
+# Plotting the Interaction between Gender and Education
+ggplot(data, aes(x = Education, y = Salary, color = Gender, group = Gender)) +
+  stat_summary(fun =mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line",size = 1.2) +
+  stat_summary(fun.data= mean_se, geom = "errorbar",width = 0.2) +
+  labs(title = "Does Education Pay Off Differently by Gender?",
+       subtitle = "Parallel lines indicate Equal 'Return on Investment' for Education",
+       x = "Education Level",
+       y = "Average Salary") +
+  scale_color_manual(values = c("Female" = "#E76BF3","Male" = "#00BFC4")) +
+  theme_minimal()
+```
+```{r}
+# 1. Install and load necessary packages
+# install.packages(c("ggplot2", "dplyr"))
+library(stringr) # Used for cleaning labels
+
+# 2. Manually input the significant data from your RQ4 model (p < 0.05)
+# Includes Estimate, Std. Error for CI calculation, and Term for labeling.
+df_data <- data.frame(
+  Term = c("JobTitleManager", "JobTitleSoftware Engineer", "DeptSales", "Seniority",
+           "EducationPhD", "EducationMasters", "DeptEngineering", "PerfEval",
+           "Age", "GenderMale"),
+  Estimate = c(6.15045, 2.95718, 2.58741, 1.84565, 1.52265, 1.27290, 1.98807, 0.38201,
+               0.20982, -1.05857),
+  Std_Error = c(0.89877, 0.79740, 0.67777, 0.21204, 0.50842, 0.51223, 0.65513, 0.12250,
+                0.02427, 0.40827)
+)
+
+# 3. Calculate OR and 95% Confidence Intervals (CI)
+df_plot <- df_data %>%
+  mutate(
+    OR = exp(Estimate),
+    Lower_CI = exp(Estimate - 1.96 * Std_Error), # 1.96 for 95% CI
+    Upper_CI = exp(Estimate + 1.96 * Std_Error)
+  )
+
+# 4. Prepare Labels and Color Groups
+df_plot <- df_plot %>%
+  # Create clean labels for the y-axis
+  mutate(
+    Term_Label = case_when(
+      Term == "GenderMale" ~ "Gender (Male vs. Female Ref.)",
+      Term == "Seniority" ~ "Seniority (Per Unit)",
+      Term == "PerfEval" ~ "Performance Evaluation (Per Unit)",
+      Term == "Age" ~ "Age (Per Year)",
+      TRUE ~ str_replace_all(Term, c("JobTitle" = "Job Title: ", "Dept" = "Department: ", "Education" = "Education: "))
+    ),
+    # Define colors
+    Group = case_when(
+      Term == "GenderMale" ~ "Gender Effect",
+      str_detect(Term, "JobTitle|Dept") ~ "Structural/Organizational",
+      TRUE ~ "Human Capital"
+    )
+  ) %>%
+  # Sort the plot by OR magnitude (ascending for plot order)
+  arrange(desc(OR))
+
+# Convert Term_Label to a factor with the correct order
+df_plot$Term_Label <- factor(df_plot$Term_Label, levels = rev(df_plot$Term_Label))
+
+
+# 5. Generate the Plot using ggplot2
+ggplot(df_plot, aes(x = OR, y = Term_Label, color = Group)) +
+
+  # Plot the confidence intervals (the sharp lines)
+  geom_errorbarh(aes(xmin = Lower_CI, xmax = Upper_CI), height = 0.2, size = 1.2) +
+
+  # Plot the point estimate (the sharp dot)
+  geom_point(size = 3.5) +
+
+  # Add the vertical line at OR = 1 (no effect)
+  geom_vline(xintercept = 1, linetype = "dashed", color = "black", linewidth = 1) +
+
+  # Use log scale for the X-axis and define ticks for readability
+  scale_x_log10(
+    breaks = c(0.2, 0.5, 1, 2, 5, 10, 50, 100, 500),
+    labels = c("0.2", "0.5", "1", "2", "5", "10", "50", "100", "500")
+  ) +
+
+  # Define custom colors
+  scale_color_manual(values = c("Gender Effect" = "red",
+                                "Structural/Organizational" = "darkgreen",
+                                "Human Capital" = "darkblue")) +
+
+  # Labels and Title
+  labs(
+    title = "Odds of Being a Top 10% Earner (Odds Ratio Plot)",
+    x = "Odds Ratio (OR) - Log Scale",
+    y = "Predictor Term",
+    color = "Factor Type"
+  ) +
+
+  # Use a theme for sharp edges (theme_bw is a good choice)
+  theme_bw() +
+  theme(
+    panel.grid.minor.x = element_blank(), # Remove minor grid lines
+    panel.grid.major.y = element_blank(), # Remove horizontal grid lines
+    panel.border = element_rect(color = "black", linewidth = 1), # Sharp border
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold")
+  )
+```
