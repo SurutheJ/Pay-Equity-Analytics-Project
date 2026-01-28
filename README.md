@@ -26,7 +26,7 @@ This analysis examines whether gender-based pay disparities exist in the workpla
 ## Project Structure
 
 ```
-gender-pay-gap-analysis/
+Pay-Equity-Analytics-Project/
 ├── README.md                 # Project documentation
 ├── .gitignore               # Git ignore rules
 ├── data/
@@ -34,8 +34,30 @@ gender-pay-gap-analysis/
 ├── analysis/
 │   ├── final-project.Rmd    # R Markdown analysis
 │   └── final-project.html   # Rendered HTML report
+├── dashboard/
+│   └── app.R                # Interactive Shiny Dashboard
 └── docs/
     └── GenderPay Gap.pdf    # Project report
+```
+
+## Interactive Dashboard
+
+This project includes an interactive Shiny dashboard with:
+- **Overview**: Key metrics, pay gap statistics, and findings summary
+- **Salary Analysis**: Distribution plots, scatter plots by age/seniority
+- **Job & Department**: Analysis across roles and departments
+- **Education Impact**: ROI analysis by education level
+- **Top Earners**: Analysis of top 10% earners
+- **Data Explorer**: Interactive data table with filters
+
+### Run the Dashboard
+
+```r
+# Install required packages
+install.packages(c("shiny", "shinydashboard", "plotly", "DT"))
+
+# Run the dashboard
+shiny::runApp("dashboard")
 ```
 
 ## Dataset
